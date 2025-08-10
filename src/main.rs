@@ -1,6 +1,6 @@
-use core::alloc;
+use std::ops::Deref;
 use bevy::input::gamepad::GamepadInput;
-use bevy::{prelude::*, transform};
+use bevy::{prelude::*};
 use bevy_inspector_egui::bevy_egui::EguiPlugin;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
@@ -10,8 +10,13 @@ fn main() {
     let exit = App::new()
         // Bevy Plugins
         .add_plugins(DefaultPlugins)
+        // Egui and World Inspector Plugins
         .add_plugins(EguiPlugin::default())
         .add_plugins(WorldInspectorPlugin::new())
+        // Game resources
+        .insert_resource(DroneControls::default())
+        // Game systems
+        .add_systems(Update, update_drone_controls)
         .add_systems(Startup, setup)
         // .add_systems(Update, list_gamepads)
         .add_systems(Update, rotate_drone_system)
@@ -19,26 +24,45 @@ fn main() {
     info!("App exited with: {:?}", exit);
 }
 
-fn rotate_drone_system(
-    mut drone: Query<&mut Transform, With<Drone>>,
+#[derive(Debug, Resource, Default)]
+pub struct DroneControls {
+    pub thrust: f32,
+    pub pitch: f32,
+    pub roll: f32,
+    pub yaw: f32,
+}
+
+fn update_drone_controls(
     gamepad: Query<&Gamepad>,
+    mut controls: ResMut<DroneControls>,
 ) {
     let Ok(gamepad) = gamepad.single() else {
-        println!("No gamepad connected.");
+        *controls = DroneControls::default();
         return;
     };
 
-
-    // Get the gamepad's left stick input.
     let left_stick = gamepad.left_stick();
     let right_stick = gamepad.right_stick();
     let right_trigger2 = gamepad.get(GamepadInput::Button(GamepadButton::RightTrigger2)).unwrap_or(0.);
 
-    let thrust = right_trigger2;
-    let pitch = left_stick.y;
-    let yaw = right_stick.x;
-    let roll = left_stick.x;
-    println!("Thrust: {thrust:.2} Pitch: {pitch:.2}, Roll: {roll:.2}, Yaw: {yaw:.2}");
+    controls.thrust = right_trigger2;
+    controls.pitch = left_stick.y;
+    controls.roll = left_stick.x;
+    controls.yaw = right_stick.x;
+}
+
+fn rotate_drone_system(
+    mut drone: Query<&mut Transform, With<Drone>>,
+    drone_controls: Res<DroneControls>,
+) {
+    println!("{:?}", drone_controls);
+    // Get the gamepad's left stick input.
+    let DroneControls {
+        thrust,
+        pitch,
+        roll,
+        yaw,
+    } = drone_controls.deref();
 
     let Ok(mut transform) = drone.single_mut() else {
         println!("No drone entity found.");
@@ -53,7 +77,7 @@ fn rotate_drone_system(
         pitch * coef,
         roll * coef,
     );
-    transform.translation.y = thrust;
+    transform.translation.y = *thrust;
 }
 
 #[derive(Component)]

@@ -1,8 +1,8 @@
-use std::ops::Deref;
 use bevy::input::gamepad::GamepadInput;
-use bevy::{prelude::*};
+use bevy::prelude::*;
 use bevy_inspector_egui::bevy_egui::EguiPlugin;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
+use std::ops::Deref;
 
 fn main() {
     info!("Starting...");
@@ -16,14 +16,51 @@ fn main() {
         // Game resources
         .insert_resource(DroneControls::default())
         // Game systems
-        .add_systems(Update, update_drone_controls)
-        .add_systems(Startup, setup)
-        // .add_systems(Update, list_gamepads)
+        .add_systems(Startup, (setup, setup_ui))
+        .add_systems(Update, (update_drone_controls, update_drone_controls_ui))
         .add_systems(Update, rotate_drone_system)
+        // .add_systems(Update, list_gamepads)
         .run();
     info!("App exited with: {:?}", exit);
 }
 
+#[derive(Resource)]
+struct DroneControlsText(Entity);
+
+fn setup_ui(mut commands: Commands) {
+    let text_entity = commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.),
+                height: Val::Px(100.),
+                align_self: AlignSelf::FlexEnd,
+                justify_self: JustifySelf::End,
+                ..Default::default()
+            },
+            (
+                Name::new("Drone Controls Text"),
+                Text::new("Drone Controls: "),
+            ),
+        ))
+        .id();
+
+    commands.insert_resource(DroneControlsText(text_entity));
+}
+
+fn update_drone_controls_ui(
+    controls: Res<DroneControls>,
+    text_res: Res<DroneControlsText>,
+    mut query: Query<&mut Text>,
+) {
+    let Ok(mut text) = query.get_mut(text_res.0) else {
+        println!("No text entity found for drone controls.");
+        return;
+    };
+    text.0 = format!(
+        "Thrust: {:.2}\nPitch: {:.2}\nRoll: {:.2}\nYaw: {:.2}",
+        controls.thrust, controls.pitch, controls.roll, controls.yaw
+    );
+}
 #[derive(Debug, Resource, Default)]
 pub struct DroneControls {
     pub thrust: f32,
@@ -32,10 +69,7 @@ pub struct DroneControls {
     pub yaw: f32,
 }
 
-fn update_drone_controls(
-    gamepad: Query<&Gamepad>,
-    mut controls: ResMut<DroneControls>,
-) {
+fn update_drone_controls(gamepad: Query<&Gamepad>, mut controls: ResMut<DroneControls>) {
     let Ok(gamepad) = gamepad.single() else {
         *controls = DroneControls::default();
         return;
@@ -43,7 +77,9 @@ fn update_drone_controls(
 
     let left_stick = gamepad.left_stick();
     let right_stick = gamepad.right_stick();
-    let right_trigger2 = gamepad.get(GamepadInput::Button(GamepadButton::RightTrigger2)).unwrap_or(0.);
+    let right_trigger2 = gamepad
+        .get(GamepadInput::Button(GamepadButton::RightTrigger2))
+        .unwrap_or(0.);
 
     controls.thrust = right_trigger2;
     controls.pitch = left_stick.y;
@@ -55,7 +91,7 @@ fn rotate_drone_system(
     mut drone: Query<&mut Transform, With<Drone>>,
     drone_controls: Res<DroneControls>,
 ) {
-    println!("{:?}", drone_controls);
+    println!("{drone_controls:?}");
     // Get the gamepad's left stick input.
     let DroneControls {
         thrust,
@@ -71,12 +107,7 @@ fn rotate_drone_system(
 
     let coef = 1.0;
     // Apply rotation based on the gamepad input.
-    transform.rotation = Quat::from_euler(
-        EulerRot::YXZ,
-        yaw * coef,
-        pitch * coef,
-        roll * coef,
-    );
+    transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw * coef, pitch * coef, roll * coef);
     transform.translation.y = *thrust;
 }
 
@@ -100,8 +131,7 @@ fn setup(
     // Spawn a camera looking at the entities to show what's happening in this example.
     commands.spawn((
         Camera3d::default(),
-        Transform::from_xyz(2.0, 1.0, 5.0)
-            .looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(2.0, 1.0, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
     // Add a light source so we can see clearly.
@@ -128,4 +158,3 @@ fn setup(
 //     println!("Currently connected gamepad: {name}");
 //     println!("Gamepad: {g:#?},");
 // }
-

@@ -2,10 +2,9 @@ use bevy::input::gamepad::GamepadInput;
 use bevy::prelude::*;
 use bevy_inspector_egui::bevy_egui::EguiPlugin;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
-use std::ops::Deref;
 
 fn main() {
-    info!("Starting...");
+    println!("Starting...");
 
     let exit = App::new()
         // Bevy Plugins
@@ -14,7 +13,6 @@ fn main() {
         .add_plugins(EguiPlugin::default())
         .add_plugins(WorldInspectorPlugin::new())
         // Game resources
-        .insert_resource(DroneControls::default())
         // Game systems
         .add_systems(Startup, (setup, setup_ui))
         .add_systems(Update, (update_drone_controls, update_drone_controls_ui))
@@ -48,12 +46,16 @@ fn setup_ui(mut commands: Commands) {
 }
 
 fn update_drone_controls_ui(
-    controls: Res<DroneControls>,
+    controls: Query<&DronePosition, With<PlayerDrone>>,
     text_res: Res<DroneControlsText>,
     mut query: Query<&mut Text>,
 ) {
-    let Ok(mut text) = query.get_mut(text_res.0) else {
-        println!("No text entity found for drone controls.");
+    let Some(controls) = controls.single().ok() else {
+        info!("No drone controls found.");
+        return;
+    };
+    let Some(mut text) = query.get_mut(text_res.0).ok() else {
+        info!("No text entity found for drone controls.");
         return;
     };
     text.0 = format!(
@@ -61,17 +63,24 @@ fn update_drone_controls_ui(
         controls.thrust, controls.pitch, controls.roll, controls.yaw
     );
 }
-#[derive(Debug, Resource, Default)]
-pub struct DroneControls {
+#[derive(Debug, Default, Component)]
+pub struct DronePosition {
     pub thrust: f32,
     pub pitch: f32,
     pub roll: f32,
     pub yaw: f32,
 }
 
-fn update_drone_controls(gamepad: Query<&Gamepad>, mut controls: ResMut<DroneControls>) {
+fn update_drone_controls(
+    gamepad: Query<&Gamepad>,
+    mut controls: Query<&mut DronePosition, With<PlayerDrone>>,
+) {
     let Ok(gamepad) = gamepad.single() else {
-        *controls = DroneControls::default();
+        info!("No gamepad found for drone controls.");
+        return;
+    };
+    let Ok(mut controls) = controls.single_mut() else {
+        info!("No drone controls found.");
         return;
     };
 
@@ -83,25 +92,29 @@ fn update_drone_controls(gamepad: Query<&Gamepad>, mut controls: ResMut<DroneCon
 
     controls.thrust = right_trigger2;
     controls.pitch = left_stick.y;
-    controls.roll = left_stick.x;
-    controls.yaw = right_stick.x;
+    controls.roll = -left_stick.x;
+    controls.yaw = -right_stick.x;
 }
 
 fn rotate_drone_system(
-    mut drone: Query<&mut Transform, With<Drone>>,
-    drone_controls: Res<DroneControls>,
+    mut drone: Query<&mut Transform, With<PlayerDrone>>,
+    controls: Query<&DronePosition, With<PlayerDrone>>,
 ) {
-    println!("{drone_controls:?}");
+    let Some(drone_controls) = controls.single().ok() else {
+        info!("No drone controls found.");
+        return;
+    };
+    info!("{drone_controls:?}");
     // Get the gamepad's left stick input.
-    let DroneControls {
+    let DronePosition {
         thrust,
         pitch,
         roll,
         yaw,
-    } = drone_controls.deref();
+    } = drone_controls;
 
     let Ok(mut transform) = drone.single_mut() else {
-        println!("No drone entity found.");
+        info!("No drone entity found.");
         return;
     };
 
@@ -112,7 +125,7 @@ fn rotate_drone_system(
 }
 
 #[derive(Component)]
-struct Drone;
+struct PlayerDrone;
 
 fn setup(
     mut commands: Commands,
@@ -122,7 +135,8 @@ fn setup(
     // Spawn a cube to rotate.
     commands.spawn((
         Name::new("Drone"),
-        Drone,
+        PlayerDrone,
+        DronePosition::default(),
         Mesh3d(meshes.add(Cuboid::default())),
         MeshMaterial3d(materials.add(Color::WHITE)),
         Transform::from_translation(Vec3::ZERO),

@@ -12,6 +12,9 @@ fn main() {
         // Egui and World Inspector Plugins
         .add_plugins(EguiPlugin::default())
         .add_plugins(WorldInspectorPlugin::new())
+        // Game types
+        .register_type::<PlayerDrone>()
+        .register_type::<DronePosition>()
         // Game resources
         // Game systems
         .add_systems(Startup, (setup, setup_ui, spawn_stick_position_ui))
@@ -80,7 +83,7 @@ fn build_stick_ui(side: StickSideUi) -> impl Bundle {
                 align_items: AlignItems::Center,
                 ..Default::default()
             },
-            BackgroundColor(Color::Srgba(Srgba::new(0.5, 0.0, 0.0, 0.9))),
+            BackgroundColor(Color::Srgba(Srgba::new(0.5, 0.5, 0.0, 0.9))),
             BorderRadius {
                 top_left: Val::Percent(50.),
                 top_right: Val::Percent(50.),
@@ -131,10 +134,8 @@ fn setup_ui(mut commands: Commands) {
                 justify_self: JustifySelf::End,
                 ..Default::default()
             },
-            (
-                Name::new("Drone Controls Text"),
-                Text::new("Drone Controls: "),
-            ),
+            Name::new("Drone Controls Text"),
+            Text::new("Drone Controls: "),
         ))
         .id();
 
@@ -159,7 +160,7 @@ fn update_drone_controls_ui(
         controls.throttle, controls.pitch, controls.roll, controls.yaw
     );
 }
-#[derive(Debug, Default, Component)]
+#[derive(Debug, Default, Component, Reflect)]
 pub struct DronePosition {
     pub throttle: f32,
     pub yaw: f32,
@@ -192,14 +193,12 @@ fn update_drone_controls(
     controls.roll = left_stick.x;
 }
 
-fn rotate_drone_system(
-    mut drone: Query<&mut Transform, With<PlayerDrone>>,
-    controls: Query<&DronePosition, With<PlayerDrone>>,
-) {
-    let Some(drone_controls) = controls.single().ok() else {
-        debug!("No drone controls found.");
+fn rotate_drone_system(mut drone: Query<(&mut Transform, &DronePosition), With<PlayerDrone>>) {
+    let Ok((mut transform, drone_controls)) = drone.single_mut() else {
+        debug!("No drone entity found.");
         return;
     };
+
     trace!("{drone_controls:?}");
     // Get the gamepad's left stick input.
     let DronePosition {
@@ -209,18 +208,13 @@ fn rotate_drone_system(
         yaw,
     } = drone_controls;
 
-    let Ok(mut transform) = drone.single_mut() else {
-        debug!("No drone entity found.");
-        return;
-    };
-
     let coef = 1.0;
     // Apply rotation based on the gamepad input.
     transform.rotation = Quat::from_euler(EulerRot::YXZ, -yaw * coef, pitch * coef, roll * coef);
     transform.translation.y = *thrust;
 }
 
-#[derive(Component)]
+#[derive(Component, Reflect)]
 struct PlayerDrone;
 
 fn setup(

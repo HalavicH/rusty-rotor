@@ -37,12 +37,22 @@ impl Default for FreeCameraMode {
 }
 
 /// Track yaw/pitch for mouse look
-#[derive(Resource, Default, Reflect)]
+#[derive(Resource, Reflect)]
 #[reflect(Resource)]
 struct CameraRotation {
     yaw: f32,
     pitch: f32,
     sensitivity: f32,
+}
+
+impl Default for CameraRotation {
+    fn default() -> Self {
+        Self {
+            yaw: 0.0,
+            pitch: 0.0,
+            sensitivity: 0.3,
+        }
+    }
 }
 
 #[derive(Component, Reflect)]
@@ -139,9 +149,9 @@ fn toggle_controls(
 
 fn handle_input(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mouse_motion_events: EventReader<MouseMotion>,
+    mut mouse_motion_events: EventReader<MouseMotion>,
     free_camera_mode: ResMut<FreeCameraMode>,
-    cam_rot: ResMut<CameraRotation>,
+    mut cam_rot: ResMut<CameraRotation>,
     mut query: Query<&mut Transform, With<Camera>>,
     time: Res<Time>,
 ) {
@@ -154,16 +164,28 @@ fn handle_input(
         return;
     };
 
+    let mut mouse_updated = false;
     // --- 1. Mouse look ---
-    // for ev in mouse_motion_events.read() {
-    //     info!("Free camera controls: Mouse motion detected: {:?}", ev.delta);
-    //     cam_rot.yaw -= ev.delta.x * cam_rot.sensitivity * time.delta_secs();
-    //     cam_rot.pitch -= ev.delta.y * cam_rot.sensitivity * time.delta_secs();
-    //     cam_rot.pitch = cam_rot.pitch.clamp(-1.54, 1.54); // avoid flipping (±~89°)
-    // }
-    //
-    // transform.rotation = Quat::from_axis_angle(Vec3::Y, cam_rot.yaw)
-    //     * Quat::from_axis_angle(Vec3::X, cam_rot.pitch);
+    for ev in mouse_motion_events.read() {
+        info!(
+            "Free camera controls: Mouse motion detected: {:?}",
+            ev.delta
+        );
+        cam_rot.yaw -= ev.delta.x * cam_rot.sensitivity * time.delta_secs();
+        cam_rot.pitch -= ev.delta.y * cam_rot.sensitivity * time.delta_secs();
+        cam_rot.pitch = cam_rot.pitch.clamp(-1.54, 1.54); // avoid flipping (±~89°)
+        mouse_updated = true;
+    }
+
+    if mouse_updated {
+        info!(
+            "Collected mouse motion: yaw = {:.2}, pitch = {:.2}",
+            cam_rot.yaw, cam_rot.pitch
+        );
+    }
+
+    transform.rotation =
+        Quat::from_axis_angle(Vec3::Y, cam_rot.yaw) * Quat::from_axis_angle(Vec3::X, cam_rot.pitch);
 
     // --- 2. Movement ---
     let mut movement = Vec3::ZERO;

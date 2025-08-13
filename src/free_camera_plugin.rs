@@ -11,7 +11,6 @@ impl Plugin for FreeCameraPlugin {
             .add_systems(Update, (toggle_controls, update_ui))
             // Initialize resources
             .init_resource::<FreeCameraMode>()
-            .init_resource::<CameraRotation>()
             // Register types for reflection
             .register_type::<FreeCameraMode>()
             .register_type::<CameraRotation>();
@@ -37,8 +36,8 @@ impl Default for FreeCameraMode {
 }
 
 /// Track yaw/pitch for mouse look
-#[derive(Resource, Reflect)]
-#[reflect(Resource)]
+#[derive(Component, Reflect)]
+#[reflect(Component)]
 struct CameraRotation {
     yaw: f32,
     pitch: f32,
@@ -133,9 +132,29 @@ fn update_ui(
 fn toggle_controls(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut free_camera_mode: ResMut<FreeCameraMode>,
+    mut query: Query<(Entity, &Transform, Option<&mut CameraRotation>), With<Camera>>,
+    mut commands: Commands,
 ) {
     if keyboard.just_pressed(KeyCode::KeyF) {
         free_camera_mode.enabled = !free_camera_mode.enabled;
+
+        let (entity, transform, cam_rot_opt) = query.single_mut().expect("Need exactly one camera");
+
+        if free_camera_mode.enabled {
+            // On enable: add component if missing
+            if cam_rot_opt.is_none() {
+                let (yaw, pitch, _roll) = transform.rotation.to_euler(EulerRot::YXZ);
+                commands.entity(entity).insert(CameraRotation {
+                    yaw,
+                    pitch,
+                    sensitivity: 0.3,
+                });
+            }
+        } else {
+            // On disable: remove the component
+            commands.entity(entity).remove::<CameraRotation>();
+        }
+
         info!(
             "Free camera controls are now {}",
             if free_camera_mode.enabled {
@@ -151,23 +170,22 @@ fn handle_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut mouse_motion_events: EventReader<MouseMotion>,
     free_camera_mode: ResMut<FreeCameraMode>,
-    mut cam_rot: ResMut<CameraRotation>,
-    mut query: Query<&mut Transform, With<Camera>>,
+    mut query: Query<(&mut Transform, &mut CameraRotation), With<Camera>>,
     time: Res<Time>,
 ) {
     if !free_camera_mode.enabled {
         return;
     }
 
-    let Ok(mut transform) = query.single_mut() else {
-        warn!("No camera found to control with free camera plugin.");
+    let Ok((mut transform, mut cam_rot)) = query.single_mut() else {
+        info!("No free camera found to control.");
         return;
     };
 
     let mut mouse_updated = false;
     // --- 1. Mouse look ---
     for ev in mouse_motion_events.read() {
-        info!(
+        debug!(
             "Free camera controls: Mouse motion detected: {:?}",
             ev.delta
         );
@@ -178,7 +196,7 @@ fn handle_input(
     }
 
     if mouse_updated {
-        info!(
+        debug!(
             "Collected mouse motion: yaw = {:.2}, pitch = {:.2}",
             cam_rot.yaw, cam_rot.pitch
         );
@@ -210,7 +228,7 @@ fn handle_input(
     }
 
     if movement != Vec3::ZERO {
-        info!(
+        debug!(
             "Free camera controls: Moving {:?} at speed {} m/s",
             movement, free_camera_mode.speed_mps
         );

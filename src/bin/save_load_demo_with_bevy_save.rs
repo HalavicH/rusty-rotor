@@ -21,8 +21,11 @@ fn main() {
         .add_systems(Startup, setup)
         .add_systems(Update, (rotate_cube, move_cube))
         .add_systems(Update, handle_save_input)
+        // .add_systems(Update, inflate_from_asset_props)
         // types
         .register_type::<Cube>()
+        .register_type::<CanSaveLoad>()
+        .register_type::<CubePrefab>()
         .run();
 }
 
@@ -67,8 +70,7 @@ pub struct ApplyFlow;
 
 fn save_cube(In(cap): In<Builder>, world: &World) -> Builder {
     cap.scope(world, |b| {
-        b
-            .allow::<CanSaveLoad>()
+        b.allow::<CanSaveLoad>()
             .allow::<Name>()
             .allow::<Transform>()
             .allow::<Cube>()
@@ -78,6 +80,7 @@ fn save_cube(In(cap): In<Builder>, world: &World) -> Builder {
                 // Only entities with the `Persistent` component will be captured
                 e.contains::<CanSaveLoad>()
             })
+            .extract_all_prefabs::<CubePrefab>()
             .clear_empty()
     })
 }
@@ -85,10 +88,88 @@ fn save_cube(In(cap): In<Builder>, world: &World) -> Builder {
 fn load_cube(In(apply): In<Applier<'static>>, world: &mut World) -> Applier<'static> {
     apply.scope(world, |a| {
         // Apply is handled automatically for us
-        // a.apply().expect("Failed to apply")
 
-        a.despawn::<With<CanSaveLoad>>()
+        a.prefab::<CubePrefab>().despawn::<With<CanSaveLoad>>()
     })
+}
+
+#[derive(Component, Default, Reflect)]
+#[reflect(Component)]
+pub struct Asset3dProps {
+    pub mesh: String,
+    pub color: Color,
+}
+
+// fn inflate_from_asset_props(
+//     mut commands: Commands,
+//     meshes: Res<Assets<Mesh>>,
+//     materials: Res<Assets<StandardMaterial>>,
+//     query: Query<(Entity, &Asset3dProps)>,
+// ) {
+//     for (entity, props) in query.iter() {
+//         if props.mesh == "Cuboid" {
+//             commands.entity(entity).insert(Mesh3d(&meshes).add(Cuboid::default()));
+//         }
+//         if let Some(material) = materials.get(&props.color.into()) {
+//             commands.entity(entity).insert(MeshMaterial3d(material.clone()));
+//         }
+//
+//         // delete the Asset3dProps component after inflating
+//         commands.entity(entity).remove::<Asset3dProps>();
+//     }
+// }
+
+// Idea of reusable prefab, which can be used to spawn entities of different types (with different set of components)
+// struct MeshPrefab<T> {
+//     /// Path to the mesh asset
+//     mesh: String,
+//     /// Material color
+//     color: Color,
+//
+//     /// Rest of components of generic entity
+//     bundle: T,
+// }
+
+#[derive(Reflect, Default)]
+struct CubePrefab {
+    color: Color,
+    transform: Transform,
+}
+
+impl Prefab for CubePrefab {
+    type Marker = Cube;
+
+    /// What components will be added to the entity when it's loaded from the save file.
+    fn spawn(self, target: Entity, world: &mut World) {
+        let mut meshes = world.resource_mut::<Assets<Mesh>>();
+        let handle = meshes.add(Cuboid::default()); // TODO: Looks like bad idea to create a new mesh every time. How to reuse it?
+
+        let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
+        let mat_handle = materials.add(self.color); // Looks like a bad idea to create a new material every time. TODO: How to reuse it?
+
+        world.entity_mut(target).insert((
+            Name::new("Cube"),
+            Mesh3d(handle),
+            MeshMaterial3d(mat_handle),
+            self.transform,
+        ));
+    }
+
+    /// Extracts serializable data from the entity to be saved, as we can't save assets directly.
+    fn extract(builder: BuilderRef) -> BuilderRef {
+        let world = builder.world();
+        builder.extract_prefab(|entity| {
+            let materials_asset_server = world.resource::<Assets<StandardMaterial>>();
+
+            let material_handle = entity.get::<MeshMaterial3d<StandardMaterial>>()?.0.clone();
+            let material = materials_asset_server.get(&material_handle)?;
+            let transform = entity.get::<Transform>().cloned().unwrap_or_default();
+            Some(CubePrefab {
+                color: material.base_color,
+                transform,
+            })
+        })
+    }
 }
 
 fn handle_save_input(world: &mut World) {
@@ -103,25 +184,15 @@ fn handle_save_input(world: &mut World) {
     }
 }
 ///// Game components and systems /////
-#[derive(Component, Reflect)]
+#[derive(Component, Reflect, Default)]
 #[reflect(Component)]
 #[require(CanSaveLoad)]
 struct Cube;
 
-fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
+fn setup(mut commands: Commands) {
     trace!("Setting up the scene...");
     // Spawn a cube to rotate.
-    commands.spawn((
-        Cube,
-        Name::new("Cube"),
-        Mesh3d(meshes.add(Cuboid::default())),
-        MeshMaterial3d(materials.add(Color::WHITE)),
-        Transform::from_translation(Vec3::ZERO),
-    ));
+    commands.spawn_prefab(CubePrefab::default());
 
     // Spawn a camera looking at the entities to show what's happening in this example.
     commands.spawn((

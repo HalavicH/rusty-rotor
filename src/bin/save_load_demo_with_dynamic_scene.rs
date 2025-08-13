@@ -43,7 +43,7 @@ fn save_on_input(
     scene_world.insert_resource(type_registry.clone());
     // let mut persistent_entities = world.query::<(&Cube, &Persistent, &Transform, &Mesh3d)>();
 
-    for (_, _, t, m) in persistent_entities {
+    for (_, _, t, _m) in persistent_entities {
         // Spawn the cube in the new world
         scene_world.spawn((
             Cube, Persistent, *t,

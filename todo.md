@@ -34,7 +34,10 @@ Load process:
 - load component state from a file
 - patch entities with their state
 - spawn dynamic entities from the file with their component states
-DoD:
-- load initial scene with static entities, spawn dynamic entities
-- change camera position/entity position, save it to a file
-- load the scene from a file with persisted changes
+DoD (bevy save_load):
+- [x] load initial scene with static entities, spawn dynamic entities
+- [x] change camera position/entity position, save it to a file
+- [x] load the scene from a file with persisted changes
+
+### Implement input system
+- [ ] Implement input system to abstract actions from the input source

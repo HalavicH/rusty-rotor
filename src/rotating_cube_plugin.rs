@@ -1,7 +1,7 @@
+use crate::save_system_plugin::CanSaveLoad;
 use bevy::prelude::*;
 use bevy_inspector_egui::bevy_egui::EguiContexts;
 use bevy_inspector_egui::egui;
-
 /// Used for demo purposes, this plugin creates a rotating cube in a Bevy application.
 pub struct RotatingCubePlugin;
 
@@ -46,9 +46,10 @@ fn render_egui_slider(mut contexts: EguiContexts, mut rotation_speed_query: Quer
 
 #[derive(Component, Default, Reflect)]
 #[reflect(Component)]
-struct Cube {
+#[require(CanSaveLoad)] // For save/load functionality, this component is required.
+pub struct Cube {
     /// Coeficient for the rotation speed. At 1.0, the cube rotates at 90 degrees per second.
-    rotation_speed_coef: f32,
+    pub rotation_speed_coef: f32,
 }
 
 fn setup(

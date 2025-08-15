@@ -8,3 +8,4 @@ bevy = { version = "0.16.1" }
 bevy-inspector-egui = "0.32.0"
 bevy_save = "1.0.0"
 avian3d = "0.3"
+bevy_rapier3d = { version = "0.31.0", features = ["debug-render-3d"] }

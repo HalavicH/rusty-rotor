@@ -45,16 +45,15 @@ impl GravityType {
         match self {
             GravityType::Space => Vec3::ZERO,
             GravityType::Moon => Vec3::NEG_Y * 1.62,
-            GravityType::Earth => Vec3::NEG_Y * 9.81
+            GravityType::Earth => Vec3::NEG_Y * 9.81,
         }
     }
     pub fn gravity_reverse(self) -> Vec3 {
         match self {
             GravityType::Space => Vec3::ZERO,
             GravityType::Moon => Vec3::Y * 1.62,
-            GravityType::Earth => Vec3::Y * 9.81
+            GravityType::Earth => Vec3::Y * 9.81,
         }
-
     }
 }
 
@@ -76,7 +75,7 @@ fn setup_scene(
         // Avian only sends/observes collision events for entities
         // with this tag:
         CollisionEventsEnabled,
-        ));
+    ));
 
     // Add a light source so we can see clearly.
     commands.spawn((
@@ -93,8 +92,8 @@ fn setup_scene(
 
     commands.spawn((
         Camera3d::default(),
-        Transform::from_xyz(-10.0, 8.0, 14.0). looking_at(Vec3::Y * 2.0, Dir3::Y),
-        ));
+        Transform::from_xyz(-10.0, 8.0, 14.0).looking_at(Vec3::Y * 2.0, Dir3::Y),
+    ));
 }
 fn spawn_cubes(
     mut commands: Commands,
@@ -104,7 +103,7 @@ fn spawn_cubes(
     for y in 0..5 {
         for x in 0..5 {
             let pos = Vec3::new(x as f32 - 3.0, 3.0 + y as f32 * 1.2, 0.0);
-            commands.spawn ((
+            commands.spawn((
                 Name::new(format!("Cube_{x}_{y}")),
                 RigidBody::Dynamic,
                 Collider::cuboid(1.0, 1.0, 1.0),
@@ -116,24 +115,27 @@ fn spawn_cubes(
                 MeshMaterial3d(materials.add(Color::srgb(0.6, 0.7, 1.0))),
                 // enable events for these entities:
                 CollisionEventsEnabled,
-                ));
+            ));
         }
     }
 }
 
 // Avian’s buffered event type:
+#[allow(dead_code)]
 fn log_collisions(mut started: EventReader<CollisionStarted>) {
     for ev in started.read() {
         info!("Avian: collision START between {:?} and {:?}", ev.0, ev.1);
     }
 }
 
-fn apply_gravity(mut gravity: ResMut<Gravity>, world_gravity: ResMut<WorldGravity>)
-{
-    if world_gravity.is_enabled == false {
+fn apply_gravity(mut gravity: ResMut<Gravity>, world_gravity: ResMut<WorldGravity>) {
+    if !world_gravity.is_enabled {
         gravity.0 = Vec3::ZERO;
     } else if world_gravity.gravity_force != gravity.0 {
-        info!("Gravity was changed from {:?} to {:?}", gravity.0, world_gravity.gravity_force);
+        info!(
+            "Gravity was changed from {:?} to {:?}",
+            gravity.0, world_gravity.gravity_force
+        );
         gravity.0 = world_gravity.gravity_force;
     }
 }
@@ -141,22 +143,36 @@ fn apply_gravity(mut gravity: ResMut<Gravity>, world_gravity: ResMut<WorldGravit
 fn handle_gravity_type(keys: Res<ButtonInput<KeyCode>>, mut world_gravity: ResMut<WorldGravity>) {
     if keys.just_pressed(KeyCode::Space) {
         world_gravity.is_enabled = !world_gravity.is_enabled;
-        info!("Gravity is {}", if world_gravity.is_enabled == true {"enabled"} else {"disabled"});
+        info!(
+            "Gravity is {}",
+            if world_gravity.is_enabled {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
         return;
     }
 
-    if keys.just_pressed(KeyCode::Digit1){
+    if keys.just_pressed(KeyCode::Digit1) {
         world_gravity.gravity_type = GravityType::Space;
         info!("Gravity set to Space");
-    } else if keys.just_pressed(KeyCode::Digit2){
+    } else if keys.just_pressed(KeyCode::Digit2) {
         world_gravity.gravity_type = GravityType::Moon;
         info!("Gravity set to Moon");
-    } else if keys.just_pressed(KeyCode::Digit3){
+    } else if keys.just_pressed(KeyCode::Digit3) {
         world_gravity.gravity_type = GravityType::Earth;
         info!("Gravity set to Earth");
-    } else if keys.just_pressed(KeyCode::KeyR){
+    } else if keys.just_pressed(KeyCode::KeyR) {
         world_gravity.is_reversed = !world_gravity.is_reversed;
-        info!("Gravity set to {}", if world_gravity.is_reversed == true {"reversed"} else {"normal"});
+        info!(
+            "Gravity set to {}",
+            if world_gravity.is_reversed {
+                "reversed"
+            } else {
+                "normal"
+            }
+        );
     }
 
     if world_gravity.is_reversed {

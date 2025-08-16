@@ -1,5 +1,6 @@
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
+use bevy::window::CursorGrabMode;
 
 /// Used to fly around a scene with a free camera.
 pub struct FreeCameraPlugin;
@@ -134,6 +135,7 @@ fn toggle_controls(
     mut free_camera_mode: ResMut<FreeCameraMode>,
     mut query: Query<(Entity, &Transform, Option<&mut CameraRotation>), With<Camera>>,
     mut commands: Commands,
+    mut windows: Query<&mut Window>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyF) {
         free_camera_mode.enabled = !free_camera_mode.enabled;
@@ -150,9 +152,19 @@ fn toggle_controls(
                     sensitivity: 0.3,
                 });
             }
+            // Hide and lock cursor
+            if let Ok(mut window) = windows.single_mut() {
+                window.cursor_options.visible = false;
+                window.cursor_options.grab_mode = CursorGrabMode::Locked;
+            }
         } else {
             // On disable: remove the component
             commands.entity(entity).remove::<CameraRotation>();
+            // Show and release cursor
+            if let Ok(mut window) = windows.single_mut() {
+                window.cursor_options.visible = true;
+                window.cursor_options.grab_mode = CursorGrabMode::None;
+            }
         }
 
         info!(

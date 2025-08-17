@@ -25,6 +25,8 @@ fn main() {
         // Camera plugin for free flight
         .add_plugins(FreeCameraPlugin)
         // Bevy enhanced input plugin
+        .init_resource::<KeyboardInputSettings>()
+        .init_resource::<JoyStickInputSettings>()
         .add_plugins(EnhancedInputPlugin)
         .add_input_context::<InGameContext>()
         .add_input_context::<InMenuContext>()
@@ -51,16 +53,20 @@ enum GameState {
 }
 
 #[derive(Component)]
-struct Menu;
+struct MenuRootNode;
 
 const BUTTON_BACKGROUND_COLOR: Color = Color::srgba(0.2, 0.2, 0.2, 0.8);
 
-fn spawn_menu(mut commands: Commands) {
+fn spawn_menu(
+    mut commands: Commands,
+    keyboard_bindings: Res<KeyboardInputSettings>,
+    joy_bindings: Res<JoyStickInputSettings>,
+) {
     info!("Spawning menu UI");
     // Spawn a menu UI
     commands
         .spawn((
-            Menu,
+            MenuRootNode,
             Name::new("Menu"),
             Node {
                 width: Val::Percent(100.0),
@@ -73,6 +79,7 @@ fn spawn_menu(mut commands: Commands) {
             BackgroundColor(Srgba::new(0.0, 0.0, 0.0, 0.7).into()),
         ))
         .with_children(|parent| {
+            // Back to Game button
             parent
                 .spawn((
                     Name::new("Back to Game Button"),
@@ -107,9 +114,50 @@ fn spawn_menu(mut commands: Commands) {
                         );
                     },
                 );
+
+            // Display input mapping
+            parent.spawn((
+                Name::new("Keyboard Input Mapping"),
+                Text::new(format!( "Keyboard input:\nMovement:\n{}\nTo menu: {:?}",
+                    keyboard_bindings.movement.display_settings(), keyboard_bindings.menu
+                )),
+            ));
+
+            // parent.spawn((
+            //     Name::new("Joystick Input Mapping"),
+            //     Text::new(format!(
+            //         "Joystick input:\nMovement:{:?}\nTo menu: {:?}",
+            //         joy_bindings.movement.display_settings(), joy_bindings.menu
+            //     )),
+            // ));
+
+            // Exit button
+            parent
+                .spawn((
+                    Name::new("Exit Button"),
+                    Node {
+                        border: UiRect::all(Val::Px(2.0)),
+                        padding: UiRect::all(Val::Px(10.0)),
+                        ..default()
+                    },
+                    Button,
+                    BackgroundColor(BUTTON_BACKGROUND_COLOR),
+                    BorderRadius::all(Val::Px(2.0)),
+                    BorderColor(Srgba::new(1.0, 0.0, 0.0, 0.5).into()),
+                    Text::new("Exit Game"),
+                ))
+                .observe(|mut trigger: Trigger<Pointer<Click>>| {
+                    info!("'Exit Button' was clicked (entity: {:?})", trigger.target());
+                    // Stop the event from bubbling up the entity hierarchy
+                    trigger.propagate(false);
+
+                    // Exit the application
+                    std::process::exit(0);
+                });
         });
 }
 
+#[allow(clippy::type_complexity)]
 fn button_coloring_system(
     mut interaction_query: Query<
         (&Interaction, &mut BackgroundColor),
@@ -131,7 +179,7 @@ fn button_coloring_system(
     }
 }
 
-fn despawn_menu(mut commands: Commands, menu_query: Query<Entity, With<Menu>>) {
+fn despawn_menu(mut commands: Commands, menu_query: Query<Entity, With<MenuRootNode>>) {
     info!("Despawning menu UI");
     // Despawn the menu UI
     if let Ok(menu_entity) = menu_query.single() {
@@ -141,7 +189,11 @@ fn despawn_menu(mut commands: Commands, menu_query: Query<Entity, With<Menu>>) {
     }
 }
 
-fn setup(mut commands: Commands) {
+fn setup(
+    mut commands: Commands,
+    keyboard_bindings: Res<KeyboardInputSettings>,
+    joy_bindings: Res<JoyStickInputSettings>,
+) {
     // Spawn a 2D camera
     commands.spawn(Camera2d);
 
@@ -160,8 +212,8 @@ fn setup(mut commands: Commands) {
                     Action::<MovePlayer>::new(),
                     DeltaScale,
                     Bindings::spawn((
-                        Cardinal::wasd_keys(),
-                        Axial::left_stick(),
+                        CardinalBindings::from(keyboard_bindings.movement),
+                        joy_bindings.movement,
                     )),
                 ),
                 (
@@ -171,8 +223,8 @@ fn setup(mut commands: Commands) {
                             ..Default::default()
                     },
                     Bindings::spawn((
-                        Spawn(Binding::from(KeyCode::Escape)),
-                        Spawn(Binding::from(GamepadButton::South)),
+                        Spawn(Binding::from(keyboard_bindings.menu)),
+                        Spawn(joy_bindings.menu)
                     )),
                 ),
             ]
@@ -367,3 +419,80 @@ struct MoveInMenu;
 #[derive(InputAction)]
 #[action_output(bool)]
 struct IntoGameContext;
+
+///// Input bindings for the actions /////
+#[derive(Debug, Copy, Clone)]
+struct CardinalKeys(pub Cardinal<KeyCode, KeyCode, KeyCode, KeyCode>);
+
+type CardinalBindings = Cardinal<Binding, Binding, Binding, Binding>;
+#[derive(Resource, Debug)]
+struct KeyboardInputSettings {
+    movement: CardinalKeys,
+    menu: KeyCode,
+}
+impl Default for KeyboardInputSettings {
+    fn default() -> Self {
+        Self {
+            movement: CardinalKeys(Cardinal {
+                north: KeyCode::KeyW,
+                south: KeyCode::KeyS,
+                west: KeyCode::KeyA,
+                east: KeyCode::KeyD,
+            }),
+            menu: KeyCode::Escape,
+        }
+    }
+}
+impl From<CardinalKeys> for CardinalBindings {
+    fn from(keys: CardinalKeys) -> Self {
+        let keys = keys.0;
+        Cardinal {
+            north: Binding::from(keys.north),
+            south: Binding::from(keys.south),
+            west: Binding::from(keys.west),
+            east: Binding::from(keys.east),
+        }
+    }
+}
+type AxialBindings = Axial<Binding, Binding>;
+#[derive(Resource, Debug)]
+struct JoyStickInputSettings {
+    movement: AxialBindings,
+    menu: Binding,
+}
+
+impl Default for JoyStickInputSettings {
+    fn default() -> Self {
+        Self {
+            movement: Axial::left_stick(),
+            menu: Binding::from(GamepadButton::South),
+        }
+    }
+}
+
+///// Input bindings to editable ui /////
+trait BindingToUi {
+    fn display_settings(&self) -> String;
+}
+impl BindingToUi for CardinalKeys {
+    fn display_settings(&self) -> String {
+        let keys = self.0;
+        format!(
+            r#"Up: {:?}
+Down: {:?}
+Left: {:?}
+Right: {:?}"#,
+            keys.north, keys.south, keys.west, keys.east
+        )
+    }
+}
+
+impl BindingToUi for AxialBindings {
+    fn display_settings(&self) -> String {
+        format!(
+            r#"Up/Down: {:?}
+Left/Right: {:?}"#,
+            self.y, self.x
+        )
+    }
+}

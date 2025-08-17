@@ -1,13 +1,7 @@
 //! This demo evaluates the `bevy_enhanced_input` crate.
 //!
 //! # Demo Description
-//! Two contexts (`SquareContext`, `RectangleContext`) define identical actions (MoveX, MoveY).
-//! Press **R** to toggle the active context.
-//! Use **WASD** to move the currently active shape.
-//!
-//! Limitations:
-//! - actions and contexts are tied to one entity (`Controller`).
-//! - all contexts are active by default (todo: research if it's possible to have them inactive by default)
+//! This demo showcases menu and settings management for keyboard and joystick inputs using the `bevy_enhanced_input` crate.
 
 use bevy::prelude::*;
 use bevy_drone_sim::free_camera_plugin::FreeCameraPlugin;
@@ -20,6 +14,8 @@ fn main() {
     App::new()
         // Standard Bevy plugins
         .add_plugins(DefaultPlugins)
+        // Register types
+        .register_type::<KeyboardInputSettings>()
         // Debug plugins
         .add_plugins((EguiPlugin::default(), WorldInspectorPlugin::new()))
         // Camera plugin for free flight
@@ -39,7 +35,15 @@ fn main() {
         .init_state::<GameState>()
         // Startup systems
         .add_systems(Startup, (spawn_debug_ui, setup))
-        .add_systems(Update, (update_debug_ui, button_coloring_system))
+        .add_systems(
+            Update,
+            (
+                update_debug_ui,
+                button_coloring_system,
+                focus_on_click,
+                listen_for_key,
+            ),
+        )
         .add_systems(OnEnter(GameState::InMenu), spawn_menu)
         .add_systems(OnExit(GameState::InMenu), despawn_menu)
         .run();
@@ -54,6 +58,19 @@ enum GameState {
 
 #[derive(Component)]
 struct MenuRootNode;
+/// Marker for our input box
+#[derive(Component)]
+struct RebindBox;
+
+/// Marker for "currently focused" rebind box
+#[derive(Component)]
+struct Focused;
+
+#[derive(Component, Debug, Event)]
+struct NewBinding {
+    key: KeyCode,
+    mod_keys: Option<ModKeys>,
+}
 
 const BUTTON_BACKGROUND_COLOR: Color = Color::srgba(0.2, 0.2, 0.2, 0.8);
 
@@ -116,12 +133,55 @@ fn spawn_menu(
                 );
 
             // Display input mapping
-            parent.spawn((
-                Name::new("Keyboard Input Mapping"),
-                Text::new(format!( "Keyboard input:\nMovement:\n{}\nTo menu: {:?}",
-                    keyboard_bindings.movement.display_settings(), keyboard_bindings.menu
-                )),
-            ));
+            parent
+                .spawn((Name::new("Keyboard Input Mapping"), Node::DEFAULT))
+                .with_children(|parent| {
+                    parent
+                        .spawn((Name::new("Move Forward Row"), Node::DEFAULT))
+                        .with_children(|parent| {
+                            parent.spawn((
+                                Name::new("Move Forward Label"),
+                                Text::new("Move Forward:"),
+                                Node::DEFAULT,
+                            ));
+                            parent
+                                .spawn((
+                                    RebindBox,
+                                    Node {
+                                        width: Val::Px(200.0),
+                                        height: Val::Px(30.0),
+                                        border: UiRect::all(Val::Px(1.0)),
+                                        padding: UiRect::all(Val::Px(5.0)),
+                                        ..default()
+                                    },
+                                    Button,
+                                    BackgroundColor(BUTTON_BACKGROUND_COLOR),
+                                    Text::new(format!("{:?}", keyboard_bindings.movement.north)),
+                                ))
+                                .observe(|mut trigger: Trigger<NewBinding>,
+                                mut keyboard_input_settings: ResMut<KeyboardInputSettings>,
+                                mut commands: Commands
+                                | {
+                                    info!(
+                                        "New binding for 'Move Forward' received: {:?}",
+                                        trigger
+                                    );
+                                    // Stop the event from bubbling up the entity hierarchy
+                                    trigger.propagate(false);
+
+                                    // Update the keyboard input settings with the new binding
+                                    keyboard_input_settings.movement.north = trigger.key;
+
+                                    // Update the text in the rebind box
+
+                                    commands.entity(trigger.target())
+                                        .insert(Text::new(format!(
+                                            "{:?}",
+                                            keyboard_input_settings.movement.north
+                                        )));
+                                });
+                        });
+                });
 
             // parent.spawn((
             //     Name::new("Joystick Input Mapping"),
@@ -157,6 +217,60 @@ fn spawn_menu(
         });
 }
 
+/// When the button is clicked, mark it as Focused
+fn focus_on_click(
+    mut commands: Commands,
+    mut q: Query<(Entity, &Interaction), (Changed<Interaction>, With<RebindBox>)>,
+    focused: Query<Entity, With<Focused>>,
+) {
+    for (entity, interaction) in &mut q {
+        if interaction == &Interaction::Pressed {
+            // Remove focus from any other entity
+            for old in &focused {
+                commands.entity(old).remove::<Focused>();
+            }
+            // Add focus to this one
+            commands.entity(entity).insert(Focused);
+            info!("Rebind box focused. Waiting for key...");
+        }
+    }
+}
+/// If a box is focused, listen for any key press
+fn listen_for_key(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    focused: Query<Entity, With<Focused>>,
+) {
+    if focused.is_empty() {
+        return;
+    }
+
+    let entity = focused
+        .single()
+        .expect("Expected exactly one focused entity");
+
+    // detect any pressed key
+    let keys_pressed = keys.get_just_pressed().collect::<Vec<_>>();
+    if keys_pressed.is_empty() {
+        // No key pressed, do nothing
+        return;
+    }
+    info!("You pressed: {:?}", keys_pressed);
+
+    let Some(&&key) = keys_pressed.first() else {
+        return;
+    };
+    // Remove the Focused marker from the entity
+    commands.entity(entity).remove::<Focused>();
+    // Emit a NewBinding event with the pressed key to trigger the rebinding
+    commands.trigger_targets(
+        NewBinding {
+            key,
+            mod_keys: Default::default(),
+        },
+        entity,
+    );
+}
 #[allow(clippy::type_complexity)]
 fn button_coloring_system(
     mut interaction_query: Query<
@@ -421,11 +535,17 @@ struct MoveInMenu;
 struct IntoGameContext;
 
 ///// Input bindings for the actions /////
-#[derive(Debug, Copy, Clone)]
-struct CardinalKeys(pub Cardinal<KeyCode, KeyCode, KeyCode, KeyCode>);
+#[derive(Debug, Copy, Clone, Reflect)]
+struct CardinalKeys {
+    pub north: KeyCode,
+    pub east: KeyCode,
+    pub south: KeyCode,
+    pub west: KeyCode,
+}
 
 type CardinalBindings = Cardinal<Binding, Binding, Binding, Binding>;
-#[derive(Resource, Debug)]
+#[derive(Resource, Debug, Reflect)]
+#[reflect(Resource)]
 struct KeyboardInputSettings {
     movement: CardinalKeys,
     menu: KeyCode,
@@ -433,19 +553,18 @@ struct KeyboardInputSettings {
 impl Default for KeyboardInputSettings {
     fn default() -> Self {
         Self {
-            movement: CardinalKeys(Cardinal {
+            movement: CardinalKeys {
                 north: KeyCode::KeyW,
                 south: KeyCode::KeyS,
                 west: KeyCode::KeyA,
                 east: KeyCode::KeyD,
-            }),
+            },
             menu: KeyCode::Escape,
         }
     }
 }
 impl From<CardinalKeys> for CardinalBindings {
     fn from(keys: CardinalKeys) -> Self {
-        let keys = keys.0;
         Cardinal {
             north: Binding::from(keys.north),
             south: Binding::from(keys.south),
@@ -476,7 +595,7 @@ trait BindingToUi {
 }
 impl BindingToUi for CardinalKeys {
     fn display_settings(&self) -> String {
-        let keys = self.0;
+        let keys = self;
         format!(
             r#"Up: {:?}
 Down: {:?}

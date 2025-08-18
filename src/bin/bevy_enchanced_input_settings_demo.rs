@@ -72,6 +72,9 @@ struct NewBinding {
     mod_keys: Option<ModKeys>,
 }
 
+#[derive(Component, Debug, Event)]
+struct KeyboardBindingChanged;
+
 const BUTTON_BACKGROUND_COLOR: Color = Color::srgba(0.2, 0.2, 0.2, 0.8);
 
 fn spawn_menu(
@@ -158,28 +161,39 @@ fn spawn_menu(
                                     BackgroundColor(BUTTON_BACKGROUND_COLOR),
                                     Text::new(format!("{:?}", keyboard_bindings.movement.north)),
                                 ))
-                                .observe(|mut trigger: Trigger<NewBinding>,
-                                mut keyboard_input_settings: ResMut<KeyboardInputSettings>,
-                                mut commands: Commands
-                                | {
-                                    info!(
-                                        "New binding for 'Move Forward' received: {:?}",
-                                        trigger
-                                    );
-                                    // Stop the event from bubbling up the entity hierarchy
-                                    trigger.propagate(false);
+                                .observe(
+                                    |mut trigger: Trigger<NewBinding>,
+                                     mut keyboard_input_settings: ResMut<KeyboardInputSettings>,
+                                     joy_bindings: Res<JoyStickInputSettings>,
+                                     move_action: Query<Entity, With<Action<MovePlayer>>>,
+                                     mut commands: Commands| {
+                                        info!(
+                                            "New binding for 'Move Forward' received: {:?}",
+                                            trigger
+                                        );
+                                        // Stop the event from bubbling up the entity hierarchy
+                                        trigger.propagate(false);
 
-                                    // Update the keyboard input settings with the new binding
-                                    keyboard_input_settings.movement.north = trigger.key;
+                                        // Update the keyboard input settings with the new binding
+                                        keyboard_input_settings.movement.north = trigger.key;
 
-                                    // Update the text in the rebind box
+                                        // Update the text in the rebind box
+                                        commands.entity(trigger.target()).insert(Text::new(
+                                            format!("{:?}", keyboard_input_settings.movement.north),
+                                        ));
 
-                                    commands.entity(trigger.target())
-                                        .insert(Text::new(format!(
-                                            "{:?}",
-                                            keyboard_input_settings.movement.north
-                                        )));
-                                });
+                                        // Update the MovePlayer action bindings (replace)
+                                        if let Ok(entity) = move_action.single() {
+                                            commands.entity(entity).remove::<Bindings>();
+                                            commands.entity(entity).insert(Bindings::spawn((
+                                                CardinalBindings::from(
+                                                    keyboard_input_settings.movement,
+                                                ),
+                                                joy_bindings.movement,
+                                            )));
+                                        }
+                                    },
+                                );
                         });
                 });
 
@@ -325,6 +339,7 @@ fn setup(
                 (
                     Action::<MovePlayer>::new(),
                     DeltaScale,
+                    // TODO: Somehow make it refresh on KeyboardBindingChanged event
                     Bindings::spawn((
                         CardinalBindings::from(keyboard_bindings.movement),
                         joy_bindings.movement,

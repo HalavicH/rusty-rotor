@@ -178,7 +178,7 @@ struct BindingRow<'a> {
     setter: fn(&mut KeyboardInputSettings, KeyCode),
 }
 
-fn spawn_binding_row(
+fn spawn_binding_row<A: InputAction + InsertBindings>(
     parent: &mut RelatedSpawnerCommands<'_, ChildOf>,
     row: BindingRow,
     keyboard_bindings: &KeyboardInputSettings,
@@ -196,9 +196,6 @@ fn spawn_binding_row(
                     RebindBoxMeta {
                         label: row.label.to_string(),
                         setter: row.setter,
-                        binding_group: |k: &KeyboardInputSettings, j: &JoyStickInputSettings| {
-                            (CardinalBindings::from(k.movement), j.movement)
-                        },
                     },
                     Node {
                         width: Val::Px(200.0),
@@ -211,7 +208,7 @@ fn spawn_binding_row(
                     BackgroundColor(BUTTON_BACKGROUND_COLOR),
                     Text::new(format!("{:?}", (row.getter)(keyboard_bindings))),
                 ))
-                .observe(handle_binding_change::<MovePlayer>);
+                .observe(handle_binding_change::<A>);
         });
 }
 
@@ -243,11 +240,20 @@ fn spawn_keyboard_settings(
     ];
 
     for row in rows {
-        spawn_binding_row(parent, row, &keyboard_bindings);
+        spawn_binding_row::<MovePlayer>(parent, row, &keyboard_bindings);
     }
+
+    // Add a row for the menu action
+    let esc = BindingRow {
+        label: "To pause menu",
+        getter: |k| k.menu,
+        setter: |k, key| k.menu = key,
+    };
+    // Doesn't work, as (CardinalBindings, AxialBindings) is not a valid binding group for IntoMenuContext
+    spawn_binding_row::<IntoMenuContext>(parent, esc, &keyboard_bindings);
 }
 
-fn handle_binding_change<A: InputAction>(
+fn handle_binding_change<A: InputAction + InsertBindings>(
     mut trigger: Trigger<NewBinding>,
     mut keyboard_input_settings: ResMut<KeyboardInputSettings>,
     joy_bindings: Res<JoyStickInputSettings>,
@@ -274,13 +280,13 @@ fn handle_binding_change<A: InputAction>(
 
     // Update the MovePlayer action bindings (replace)
     if let Ok(entity) = move_action.single() {
-        commands.entity(entity).remove::<Bindings>();
-        commands
-            .entity(entity)
-            .insert(Bindings::spawn(((meta.binding_group)(
-                &keyboard_input_settings,
-                &joy_bindings,
-            ),)));
+        let mut entity_commands: EntityCommands<'_> = commands.entity(entity);
+        entity_commands.remove::<Bindings>();
+        A::insert_bindings(
+            &mut entity_commands,
+            &keyboard_input_settings,
+            &joy_bindings,
+        );
     }
 }
 
@@ -547,17 +553,49 @@ struct MoveInMenu;
 #[action_output(bool)]
 struct IntoGameContext;
 
+trait InsertBindings {
+    /// Inserts the bindings into the entity commands.
+    fn insert_bindings(
+        entity_commands: &mut EntityCommands<'_>,
+        keyboard_input_settings: &KeyboardInputSettings,
+        joy_bindings: &JoyStickInputSettings,
+    );
+}
+
+impl InsertBindings for MovePlayer {
+    fn insert_bindings(
+        entity_commands: &mut EntityCommands<'_>,
+        keyboard_input_settings: &KeyboardInputSettings,
+        joy_bindings: &JoyStickInputSettings,
+    ) {
+        entity_commands.insert(Bindings::spawn((
+            CardinalBindings::from(keyboard_input_settings.movement),
+            joy_bindings.movement,
+        )));
+    }
+}
+
+impl InsertBindings for IntoMenuContext {
+    fn insert_bindings(
+        entity_commands: &mut EntityCommands<'_>,
+        keyboard_input_settings: &KeyboardInputSettings,
+        joy_bindings: &JoyStickInputSettings,
+    ) {
+        entity_commands.insert(Bindings::spawn((
+            Spawn(Binding::from(keyboard_input_settings.menu)),
+            Spawn(joy_bindings.menu),
+        )));
+    }
+}
+
 ///// Input bindings for the actions /////
 type BindingSetter = fn(&mut KeyboardInputSettings, KeyCode);
-type BindingGroup =
-    fn(&KeyboardInputSettings, &JoyStickInputSettings) -> (CardinalBindings, AxialBindings);
 
 #[derive(Component)]
 #[require(RebindBox)]
 struct RebindBoxMeta {
     label: String,
     setter: BindingSetter,
-    binding_group: BindingGroup,
 }
 #[derive(Debug, Copy, Clone, Reflect)]
 struct CardinalKeys {

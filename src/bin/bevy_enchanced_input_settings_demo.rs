@@ -3,6 +3,7 @@
 //! # Demo Description
 //! This demo showcases menu and settings management for keyboard and joystick inputs using the `bevy_enhanced_input` crate.
 
+use bevy::ecs::relationship::RelatedSpawnerCommands;
 use bevy::prelude::*;
 use bevy_drone_sim::free_camera_plugin::FreeCameraPlugin;
 use bevy_enhanced_input::prelude::*;
@@ -39,7 +40,7 @@ fn main() {
             Update,
             (
                 update_debug_ui,
-                button_coloring_system,
+                menu_button_coloring_system,
                 focus_on_click,
                 listen_for_key,
             ),
@@ -49,6 +50,7 @@ fn main() {
         .run();
 }
 
+///// UI and Menu Management /////
 #[derive(Default, States, Debug, Eq, PartialEq, Hash, Clone, Copy)]
 enum GameState {
     #[default]
@@ -56,31 +58,17 @@ enum GameState {
     InMenu,
 }
 
-#[derive(Component)]
-struct MenuRootNode;
-/// Marker for our input box
-#[derive(Component)]
-struct RebindBox;
-
-/// Marker for "currently focused" rebind box
-#[derive(Component)]
-struct Focused;
-
-#[derive(Component, Debug, Event)]
-struct NewBinding {
-    key: KeyCode,
-    mod_keys: Option<ModKeys>,
-}
-
-#[derive(Component, Debug, Event)]
-struct KeyboardBindingChanged;
-
 const BUTTON_BACKGROUND_COLOR: Color = Color::srgba(0.2, 0.2, 0.2, 0.8);
 
+#[derive(Component)]
+#[require(Button)]
+struct MenuButton;
+#[derive(Component)]
+struct MenuRootNode;
 fn spawn_menu(
     mut commands: Commands,
     keyboard_bindings: Res<KeyboardInputSettings>,
-    joy_bindings: Res<JoyStickInputSettings>,
+    // joy_bindings: Res<JoyStickInputSettings>,
 ) {
     info!("Spawning menu UI");
     // Spawn a menu UI
@@ -108,7 +96,7 @@ fn spawn_menu(
                         padding: UiRect::all(Val::Px(10.0)),
                         ..default()
                     },
-                    Button,
+                    MenuButton,
                     BackgroundColor(BUTTON_BACKGROUND_COLOR),
                     BorderRadius::all(Val::Px(2.0)),
                     BorderColor(Srgba::new(1.0, 0.0, 0.0, 0.5).into()),
@@ -137,64 +125,16 @@ fn spawn_menu(
 
             // Display input mapping
             parent
-                .spawn((Name::new("Keyboard Input Mapping"), Node::DEFAULT))
-                .with_children(|parent| {
-                    parent
-                        .spawn((Name::new("Move Forward Row"), Node::DEFAULT))
-                        .with_children(|parent| {
-                            parent.spawn((
-                                Name::new("Move Forward Label"),
-                                Text::new("Move Forward:"),
-                                Node::DEFAULT,
-                            ));
-                            parent
-                                .spawn((
-                                    RebindBox,
-                                    Node {
-                                        width: Val::Px(200.0),
-                                        height: Val::Px(30.0),
-                                        border: UiRect::all(Val::Px(1.0)),
-                                        padding: UiRect::all(Val::Px(5.0)),
-                                        ..default()
-                                    },
-                                    Button,
-                                    BackgroundColor(BUTTON_BACKGROUND_COLOR),
-                                    Text::new(format!("{:?}", keyboard_bindings.movement.north)),
-                                ))
-                                .observe(
-                                    |mut trigger: Trigger<NewBinding>,
-                                     mut keyboard_input_settings: ResMut<KeyboardInputSettings>,
-                                     joy_bindings: Res<JoyStickInputSettings>,
-                                     move_action: Query<Entity, With<Action<MovePlayer>>>,
-                                     mut commands: Commands| {
-                                        info!(
-                                            "New binding for 'Move Forward' received: {:?}",
-                                            trigger
-                                        );
-                                        // Stop the event from bubbling up the entity hierarchy
-                                        trigger.propagate(false);
-
-                                        // Update the keyboard input settings with the new binding
-                                        keyboard_input_settings.movement.north = trigger.key;
-
-                                        // Update the text in the rebind box
-                                        commands.entity(trigger.target()).insert(Text::new(
-                                            format!("{:?}", keyboard_input_settings.movement.north),
-                                        ));
-
-                                        // Update the MovePlayer action bindings (replace)
-                                        if let Ok(entity) = move_action.single() {
-                                            commands.entity(entity).remove::<Bindings>();
-                                            commands.entity(entity).insert(Bindings::spawn((
-                                                CardinalBindings::from(
-                                                    keyboard_input_settings.movement,
-                                                ),
-                                                joy_bindings.movement,
-                                            )));
-                                        }
-                                    },
-                                );
-                        });
+                .spawn((
+                    Name::new("Keyboard Input Mapping"),
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(5.0),
+                        ..default()
+                    },
+                ))
+                .with_children(|parent: &mut RelatedSpawnerCommands<'_, ChildOf>| {
+                    spawn_keyboard_settings(keyboard_bindings, parent);
                 });
 
             // parent.spawn((
@@ -214,7 +154,7 @@ fn spawn_menu(
                         padding: UiRect::all(Val::Px(10.0)),
                         ..default()
                     },
-                    Button,
+                    MenuButton,
                     BackgroundColor(BUTTON_BACKGROUND_COLOR),
                     BorderRadius::all(Val::Px(2.0)),
                     BorderColor(Srgba::new(1.0, 0.0, 0.0, 0.5).into()),
@@ -231,65 +171,124 @@ fn spawn_menu(
         });
 }
 
-/// When the button is clicked, mark it as Focused
-fn focus_on_click(
-    mut commands: Commands,
-    mut q: Query<(Entity, &Interaction), (Changed<Interaction>, With<RebindBox>)>,
-    focused: Query<Entity, With<Focused>>,
-) {
-    for (entity, interaction) in &mut q {
-        if interaction == &Interaction::Pressed {
-            // Remove focus from any other entity
-            for old in &focused {
-                commands.entity(old).remove::<Focused>();
-            }
-            // Add focus to this one
-            commands.entity(entity).insert(Focused);
-            info!("Rebind box focused. Waiting for key...");
-        }
-    }
+/// Helper type to describe a single binding row
+struct BindingRow<'a> {
+    label: &'a str,
+    getter: fn(&KeyboardInputSettings) -> KeyCode,
+    setter: fn(&mut KeyboardInputSettings, KeyCode),
 }
-/// If a box is focused, listen for any key press
-fn listen_for_key(
-    mut commands: Commands,
-    keys: Res<ButtonInput<KeyCode>>,
-    focused: Query<Entity, With<Focused>>,
+
+fn spawn_binding_row(
+    parent: &mut RelatedSpawnerCommands<'_, ChildOf>,
+    row: BindingRow,
+    keyboard_bindings: &KeyboardInputSettings,
 ) {
-    if focused.is_empty() {
-        return;
-    }
+    parent
+        .spawn((Name::new(format!("{} Row", row.label)), Node::DEFAULT))
+        .with_children(|parent| {
+            parent.spawn((
+                Name::new(format!("{} Label", row.label)),
+                Text::new(format!("{}:", row.label)),
+                Node::DEFAULT,
+            ));
+            parent
+                .spawn((
+                    RebindBoxMeta {
+                        label: row.label.to_string(),
+                        setter: row.setter,
+                        binding_group: |k: &KeyboardInputSettings, j: &JoyStickInputSettings| {
+                            (CardinalBindings::from(k.movement), j.movement)
+                        },
+                    },
+                    Node {
+                        width: Val::Px(200.0),
+                        height: Val::Px(30.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        padding: UiRect::all(Val::Px(5.0)),
+                        ..default()
+                    },
+                    Button,
+                    BackgroundColor(BUTTON_BACKGROUND_COLOR),
+                    Text::new(format!("{:?}", (row.getter)(keyboard_bindings))),
+                ))
+                .observe(handle_binding_change::<MovePlayer>);
+        });
+}
 
-    let entity = focused
-        .single()
-        .expect("Expected exactly one focused entity");
-
-    // detect any pressed key
-    let keys_pressed = keys.get_just_pressed().collect::<Vec<_>>();
-    if keys_pressed.is_empty() {
-        // No key pressed, do nothing
-        return;
-    }
-    info!("You pressed: {:?}", keys_pressed);
-
-    let Some(&&key) = keys_pressed.first() else {
-        return;
-    };
-    // Remove the Focused marker from the entity
-    commands.entity(entity).remove::<Focused>();
-    // Emit a NewBinding event with the pressed key to trigger the rebinding
-    commands.trigger_targets(
-        NewBinding {
-            key,
-            mod_keys: Default::default(),
+fn spawn_keyboard_settings(
+    keyboard_bindings: Res<KeyboardInputSettings>,
+    parent: &mut RelatedSpawnerCommands<ChildOf>,
+) {
+    let rows = [
+        BindingRow {
+            label: "Move Forward",
+            getter: |k| k.movement.north,
+            setter: |k, key| k.movement.north = key,
         },
-        entity,
-    );
+        BindingRow {
+            label: "Move Backward",
+            getter: |k| k.movement.south,
+            setter: |k, key| k.movement.south = key,
+        },
+        BindingRow {
+            label: "Strafe Right",
+            getter: |k| k.movement.east,
+            setter: |k, key| k.movement.east = key,
+        },
+        BindingRow {
+            label: "Strafe Left",
+            getter: |k| k.movement.west,
+            setter: |k, key| k.movement.west = key,
+        },
+    ];
+
+    for row in rows {
+        spawn_binding_row(parent, row, &keyboard_bindings);
+    }
 }
+
+fn handle_binding_change<A: InputAction>(
+    mut trigger: Trigger<NewBinding>,
+    mut keyboard_input_settings: ResMut<KeyboardInputSettings>,
+    joy_bindings: Res<JoyStickInputSettings>,
+    move_action: Query<Entity, With<Action<A>>>,
+    meta: Query<&RebindBoxMeta>,
+    mut commands: Commands,
+) {
+    trigger.propagate(false);
+
+    let ui_entity = trigger.target();
+    let meta = meta
+        .get(ui_entity)
+        .expect("Expected RebindBoxMeta component");
+
+    info!("New binding for {} received: {:?}", meta.label, trigger);
+
+    // Update the keyboard input settings with the new binding
+    (meta.setter)(&mut keyboard_input_settings, trigger.key);
+
+    // Update the text in the rebind box
+    commands
+        .entity(ui_entity)
+        .insert(Text::new(format!("{:?}", trigger.key)));
+
+    // Update the MovePlayer action bindings (replace)
+    if let Ok(entity) = move_action.single() {
+        commands.entity(entity).remove::<Bindings>();
+        commands
+            .entity(entity)
+            .insert(Bindings::spawn(((meta.binding_group)(
+                &keyboard_input_settings,
+                &joy_bindings,
+            ),)));
+    }
+}
+
 #[allow(clippy::type_complexity)]
-fn button_coloring_system(
+fn menu_button_coloring_system(
     mut interaction_query: Query<
         (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<Button>),
+        (Changed<Interaction>, With<MenuButton>),
     >,
 ) {
     for (interaction, mut color) in &mut interaction_query {
@@ -339,7 +338,6 @@ fn setup(
                 (
                     Action::<MovePlayer>::new(),
                     DeltaScale,
-                    // TODO: Somehow make it refresh on KeyboardBindingChanged event
                     Bindings::spawn((
                         CardinalBindings::from(keyboard_bindings.movement),
                         joy_bindings.movement,
@@ -550,6 +548,17 @@ struct MoveInMenu;
 struct IntoGameContext;
 
 ///// Input bindings for the actions /////
+type BindingSetter = fn(&mut KeyboardInputSettings, KeyCode);
+type BindingGroup =
+    fn(&KeyboardInputSettings, &JoyStickInputSettings) -> (CardinalBindings, AxialBindings);
+
+#[derive(Component)]
+#[require(RebindBox)]
+struct RebindBoxMeta {
+    label: String,
+    setter: BindingSetter,
+    binding_group: BindingGroup,
+}
 #[derive(Debug, Copy, Clone, Reflect)]
 struct CardinalKeys {
     pub north: KeyCode,
@@ -604,29 +613,66 @@ impl Default for JoyStickInputSettings {
     }
 }
 
-///// Input bindings to editable ui /////
-trait BindingToUi {
-    fn display_settings(&self) -> String;
-}
-impl BindingToUi for CardinalKeys {
-    fn display_settings(&self) -> String {
-        let keys = self;
-        format!(
-            r#"Up: {:?}
-Down: {:?}
-Left: {:?}
-Right: {:?}"#,
-            keys.north, keys.south, keys.west, keys.east
-        )
-    }
+///// Rebinding logic /////
+/// Marker for our input box
+#[derive(Component, Default)]
+struct RebindBox;
+
+/// Marker for "currently focused" rebind box
+#[derive(Component)]
+struct Focused;
+
+#[derive(Component, Debug, Event)]
+struct NewBinding {
+    key: KeyCode,
 }
 
-impl BindingToUi for AxialBindings {
-    fn display_settings(&self) -> String {
-        format!(
-            r#"Up/Down: {:?}
-Left/Right: {:?}"#,
-            self.y, self.x
-        )
+/// When the button is clicked, mark it as Focused
+#[allow(clippy::type_complexity)]
+fn focus_on_click(
+    mut commands: Commands,
+    mut q: Query<(Entity, &Interaction), (Changed<Interaction>, With<RebindBox>)>,
+    focused: Query<Entity, With<Focused>>,
+) {
+    for (entity, interaction) in &mut q {
+        if interaction == &Interaction::Pressed {
+            // Remove focus from any other entity
+            for old in &focused {
+                commands.entity(old).remove::<Focused>();
+            }
+            // Add focus to this one
+            commands.entity(entity).insert(Focused);
+            info!("Rebind box focused. Waiting for key...");
+        }
     }
+}
+/// If a box is focused, listen for any key press
+fn listen_for_key(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    focused: Query<Entity, With<Focused>>,
+) {
+    if focused.is_empty() {
+        return;
+    }
+
+    let entity = focused
+        .single()
+        .expect("Expected exactly one focused entity");
+
+    // detect any pressed key
+    let keys_pressed = keys.get_just_pressed().collect::<Vec<_>>();
+    if keys_pressed.is_empty() {
+        // No key pressed, do nothing
+        return;
+    }
+    info!("You pressed: {:?}", keys_pressed);
+
+    let Some(&&key) = keys_pressed.first() else {
+        return;
+    };
+    // Remove the Focused marker from the entity
+    commands.entity(entity).remove::<Focused>();
+    // Emit a NewBinding event with the pressed key to trigger the rebinding
+    commands.trigger_targets(NewBinding { key }, entity);
 }

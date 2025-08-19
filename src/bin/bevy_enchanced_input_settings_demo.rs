@@ -59,6 +59,7 @@ enum GameState {
 }
 
 const BUTTON_BACKGROUND_COLOR: Color = Color::srgba(0.2, 0.2, 0.2, 0.8);
+const REBIND_BACKGROUND_COLOR: Color = Color::srgba(0.3, 0.3, 0.3, 0.8);
 
 #[derive(Component)]
 #[require(Button)]
@@ -68,7 +69,7 @@ struct MenuRootNode;
 fn spawn_menu(
     mut commands: Commands,
     keyboard_bindings: Res<KeyboardInputSettings>,
-    // joy_bindings: Res<JoyStickInputSettings>,
+    joystick_bindings: Res<JoyStickInputSettings>,
 ) {
     info!("Spawning menu UI");
     // Spawn a menu UI
@@ -137,13 +138,18 @@ fn spawn_menu(
                     spawn_keyboard_settings(keyboard_bindings, parent);
                 });
 
-            // parent.spawn((
-            //     Name::new("Joystick Input Mapping"),
-            //     Text::new(format!(
-            //         "Joystick input:\nMovement:{:?}\nTo menu: {:?}",
-            //         joy_bindings.movement.display_settings(), joy_bindings.menu
-            //     )),
-            // ));
+            parent
+                .spawn((
+                    Name::new("Joystick Input Mapping"),
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(5.0),
+                        ..default()
+                    },
+                ))
+                .with_children(|parent| {
+                    spawn_joystick_settings(joystick_bindings, parent);
+                });
 
             // Exit button
             parent
@@ -169,6 +175,105 @@ fn spawn_menu(
                     std::process::exit(0);
                 });
         });
+}
+
+fn spawn_joystick_settings(
+    joystick_bindings: Res<JoyStickInputSettings>,
+    parent: &mut RelatedSpawnerCommands<ChildOf>,
+) {
+    // Hardcoded joystick settings
+    // TODO: Generalize
+    parent
+        .spawn((
+            Name::new("Forward/Backward Axis Binding Row"),
+            Node::DEFAULT,
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Name::new("Forward/Backward Axis Label"),
+                Text::new("Forward/Backward Axis:"),
+                Node::DEFAULT,
+            ));
+            parent.spawn((
+                RebindBox,
+                Node {
+                    width: Val::Px(200.0),
+                    height: Val::Px(30.0),
+                    border: UiRect::all(Val::Px(1.0)),
+                    padding: UiRect::all(Val::Px(5.0)),
+                    ..default()
+                },
+                Button,
+                BackgroundColor(REBIND_BACKGROUND_COLOR),
+                // Text::new(format!("{:?}", joystick_bindings.movement.y))
+            ));
+            parent
+                .spawn((Name::new("Invert Axis Row"), Node::DEFAULT))
+                .with_children(|parent| {
+                    parent.spawn((
+                        Name::new("Invert Axis Label"),
+                        Text::new("Invert Axis:"),
+                        Node::DEFAULT,
+                    ));
+                    let _ec = spawn_checkbox(parent);
+                    // Do additional setup for the checkbox
+                });
+        });
+}
+
+fn spawn_checkbox<'a>(parent: &'a mut RelatedSpawnerCommands<ChildOf>) -> EntityCommands<'a> {
+    let is_checked = false;
+    let symbol = if is_checked { "x" } else { "" };
+    let mut entity_commands = parent.spawn((
+        Name::new("Checkbox"),
+        Checkbox { is_checked },
+        Node {
+            width: Val::Px(20.0),
+            height: Val::Px(20.0),
+            border: UiRect::all(Val::Px(1.0)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        Button,
+        BackgroundColor(REBIND_BACKGROUND_COLOR),
+        children![(Node::DEFAULT, Text::new(symbol))],
+    ));
+
+    entity_commands.observe(
+        |mut trigger: Trigger<Pointer<Click>>,
+         mut checkbox: Query<&mut Checkbox>,
+         children: Query<&Children>,
+         mut commands: Commands| {
+            info!("Checkbox clicked: {:?}", trigger.target());
+            trigger.propagate(false);
+
+            let mut checkbox = checkbox
+                .single_mut()
+                .expect("Expected single Checkbox entity");
+            checkbox.is_checked = !checkbox.is_checked;
+            let symbol = if checkbox.is_checked { "x" } else { "" };
+
+            let children = children
+                .get(trigger.target())
+                .expect("Expected entity to have children");
+
+            let text_entity = children
+                .first()
+                .expect("Expected entity to have text child");
+
+            // Update the text of the checkbox
+            commands
+                .entity(*text_entity)
+                .insert(Text::new(symbol.to_string()));
+        },
+    );
+    entity_commands
+}
+
+#[derive(Component)]
+struct Checkbox {
+    is_checked: bool,
 }
 
 /// Helper type to describe a single binding row
@@ -205,7 +310,7 @@ fn spawn_binding_row<A: InputAction + InsertBindings>(
                         ..default()
                     },
                     Button,
-                    BackgroundColor(BUTTON_BACKGROUND_COLOR),
+                    BackgroundColor(REBIND_BACKGROUND_COLOR),
                     Text::new(format!("{:?}", (row.getter)(keyboard_bindings))),
                 ))
                 .observe(handle_binding_change::<A>);
@@ -326,17 +431,20 @@ fn setup(
     mut commands: Commands,
     keyboard_bindings: Res<KeyboardInputSettings>,
     joy_bindings: Res<JoyStickInputSettings>,
+    state: Res<State<GameState>>,
 ) {
     // Spawn a 2D camera
     commands.spawn(Camera2d);
+
+    let is_in_menu = state.deref() == &GameState::InMenu;
 
     // Spawn a controller entity
     commands.spawn((
         Controller,
         InGameContext,
-        ContextActivity::<InGameContext>::ACTIVE,
+        ContextActivity::<InGameContext>::new(!is_in_menu),
         InMenuContext,
-        ContextActivity::<InMenuContext>::INACTIVE,
+        ContextActivity::<InMenuContext>::new(is_in_menu),
         Name::new("Controller"),
         // In game context actions
         actions!(
